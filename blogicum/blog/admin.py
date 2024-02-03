@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import Category, Comment, Location, Post
 
 
+@admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     """Create a post editing tab."""
 
@@ -25,6 +26,7 @@ class Postline(admin.StackedInline):
     extra = 0
 
 
+@admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     """Create a category editing tab."""
 
@@ -33,6 +35,7 @@ class CategoryAdmin(admin.ModelAdmin):
     list_editable = ('is_published',)
 
 
+@admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
     """Create a location editing tab."""
 
@@ -40,13 +43,8 @@ class LocationAdmin(admin.ModelAdmin):
     list_editable = ('is_published',)
 
 
+@admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
     """Create a comment editing tab."""
 
     list_display = ('__str__', 'text', 'author', 'post')
-
-
-admin.site.register(Comment, CommentAdmin)
-admin.site.register(Post, PostAdmin)
-admin.site.register(Location, LocationAdmin)
-admin.site.register(Category, CategoryAdmin)

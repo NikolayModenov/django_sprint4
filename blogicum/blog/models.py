@@ -90,28 +90,26 @@ class Post(PublishedModel):
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        verbose_name='Автор публикации',
-        related_name='posts'
+        verbose_name='Автор публикации'
     )
     location = models.ForeignKey(
         Location,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        verbose_name='Местоположение',
-        related_name='posts'
+        verbose_name='Местоположение'
     )
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
-        verbose_name='Категория',
-        related_name='posts'
+        verbose_name='Категория'
     )
 
     class Meta:
         verbose_name = 'публикация'
         verbose_name_plural = 'Публикации'
+        default_related_name = 'posts'
         ordering = ('-pub_date',)
 
     def __str__(self):
@@ -122,7 +120,10 @@ class Comment(models.Model):
     """Create a comment table."""
 
     text = models.TextField(max_length=256, verbose_name='Текст комментария')
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Добавлено'
+    )
     author = models.ForeignKey(
         User, on_delete=models.CASCADE,
         verbose_name='Автор',
@@ -132,7 +133,7 @@ class Comment(models.Model):
         Post,
         on_delete=models.CASCADE,
         verbose_name='Публикация',
-        related_name='comment',
+        related_name='comments',
     )
 
     class Meta:
@@ -141,4 +142,4 @@ class Comment(models.Model):
         ordering = ('created_at',)
 
     def __str__(self):
-        return f'Комментарий №{self.pk}'
+        return f'Комментарий №{self.pk} от {self.created_at}'
