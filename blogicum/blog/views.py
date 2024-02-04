@@ -15,15 +15,22 @@ from django.views.generic.list import MultipleObjectMixin
 DISPLAYING_POSTS_ON_PAGE = 10
 
 
+def add_count_comments(posts):
+    """Count the number of comments received by posts."""
+    return posts.annotate(
+        comments_count=Count('comments')
+    ).order_by('-pub_date')
+
+
 def get_filtered_posts(unfiltered_posts):
-    """Filter the received messages from the database."""
-    return unfiltered_posts.select_related(
+    """Filter the received posts from the database."""
+    return add_count_comments(unfiltered_posts.select_related(
         'author', 'location', 'category'
     ).filter(
         pub_date__lte=timezone.now(),
         is_published=True,
         category__is_published=True
-    ).annotate(comments_count=Count('comments')).order_by('-pub_date')
+    ))
 
 
 class PostMixin:
@@ -64,7 +71,7 @@ class CommentChangeMixin(UserIsAuthorMixin, RedirectToPostMixin):
 
 
 class IndexListView(ListView):
-    """Open the main page."""
+    """Display the main page."""
 
     model = Post
     queryset = (
@@ -75,7 +82,7 @@ class IndexListView(ListView):
 
 
 class PostDetailView(PostMixin, DetailView):
-    """Open the page with the requested post."""
+    """Display the requested post."""
 
     template_name = 'blog/detail.html'
 
@@ -83,18 +90,20 @@ class PostDetailView(PostMixin, DetailView):
         if not get_filtered_posts(Post.objects).filter(
             id=self.kwargs.get(self.pk_url_kwarg)
         ):
-            self.get_object(
-                Post.objects.filter(author_id=self.request.user.id)
+            get_object_or_404(
+                Post.objects,
+                author=self.request.user,
+                id=self.kwargs.get(self.pk_url_kwarg)
             )
         return dict(
-            **super().get_context_data(**kwargs),
             comments=self.get_object().comments.all(),
-            form=CommentForm()
+            form=CommentForm(),
+            **super().get_context_data(**kwargs)
         )
 
 
 class PostCreateView(LoginRequiredMixin, PostMixin, CreateView):
-    """Open the post creation page."""
+    """Create a new post, the author of which is an authorized user."""
 
     def form_valid(self, form):
         form.instance.author = self.request.user
@@ -103,7 +112,7 @@ class PostCreateView(LoginRequiredMixin, PostMixin, CreateView):
 
 class PostUpdateView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
                      UpdateView):
-    """Open the edit page with the requested post."""
+    """Edit the requested post."""
 
     def get_success_url(self) -> str:
         return reverse(
@@ -114,19 +123,19 @@ class PostUpdateView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
 
 class PostDeleteView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
                      DeleteView):
-    """Open the page for deleting the requested post."""
+    """Delete the requested post."""
 
     form_class = PostForm
 
     def get_context_data(self, **kwargs):
         return dict(
-            **super().get_context_data(**kwargs),
-            form=PostForm(instance=self.get_object())
+            form=PostForm(instance=self.get_object()),
+            **super().get_context_data(**kwargs)
         )
 
 
 class CategoryDetailView(MultipleObjectMixin, DetailView):
-    """Open the posts page of the specified category."""
+    """display a set of posts of a given category."""
 
     model = Category
     slug_url_kwarg = 'category_slug'
@@ -134,18 +143,20 @@ class CategoryDetailView(MultipleObjectMixin, DetailView):
     paginate_by = DISPLAYING_POSTS_ON_PAGE
 
     def get_context_data(self, **kwargs):
-        category = self.get_object(Category.objects.filter(is_published=True))
         return dict(
+            category=self.get_object(),
             **super().get_context_data(
-                object_list=get_filtered_posts(category.posts.all()),
-                **kwargs
+                object_list=get_filtered_posts(get_object_or_404(
+                    Category,
+                    is_published=True,
+                    slug=self.kwargs.get('category_slug')
+                ).posts.all()), **kwargs
             ),
-            category=category
         )
 
 
 class ProfileDetailView(MultipleObjectMixin, DetailView):
-    """Open the user's profile page."""
+    """Display the author's profile.."""
 
     model = User
     slug_field = 'username'
@@ -155,21 +166,21 @@ class ProfileDetailView(MultipleObjectMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         author = self.get_object()
-        if self.request.user.username != self.kwargs.get('profilename'):
-            post = get_filtered_posts(author.posts)
+        if self.request.user != author:
+            posts = get_filtered_posts(author.posts)
         else:
-            post = author.posts.all()
+            posts = add_count_comments(author.posts.all())
         return dict(
+            profile=author,
             **super().get_context_data(
-                object_list=post,
+                object_list=posts,
                 **kwargs
             ),
-            profile=author
         )
 
 
 class ProfileUpdateView(LoginRequiredMixin, UpdateView):
-    """Open the user profile editing page."""
+    """Edit the author's profile."""
 
     model = User
     fields = 'username', 'first_name', 'last_name', 'email'
