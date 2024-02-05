@@ -1,5 +1,3 @@
-from blog.form import CommentForm, PostForm
-from blog.models import Category, Comment, Post
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.models import User
 from django.db.models import Count
@@ -7,30 +5,33 @@ from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.views.generic import (
-    CreateView, DeleteView, DetailView, ListView,
-    UpdateView
+    CreateView, DeleteView, DetailView, ListView, UpdateView
 )
-from django.views.generic.list import MultipleObjectMixin
+
+from .form import CommentForm, PostForm
+from .models import Category, Comment, Post
 
 DISPLAYING_POSTS_ON_PAGE = 10
 
 
-def add_count_comments(posts):
-    """Count the number of comments received by posts."""
-    return posts.annotate(
-        comments_count=Count('comments')
-    ).order_by('-pub_date')
-
-
-def get_filtered_posts(unfiltered_posts):
+def get_filtered_posts(unfiltered_posts, is_author_profile_detail_view=False):
     """Filter the received posts from the database."""
-    return add_count_comments(unfiltered_posts.select_related(
-        'author', 'location', 'category'
-    ).filter(
-        pub_date__lte=timezone.now(),
-        is_published=True,
-        category__is_published=True
-    ))
+    if is_author_profile_detail_view:
+        return (
+            unfiltered_posts
+            .annotate(comments_count=Count('comments'))
+            .order_by('-pub_date')
+        )
+    return (
+        unfiltered_posts
+        .filter(
+            pub_date__lte=timezone.now(),
+            is_published=True,
+            category__is_published=True
+        )
+        .annotate(comments_count=Count('comments'))
+        .order_by('-pub_date')
+    )
 
 
 class PostMixin:
@@ -86,7 +87,7 @@ class PostDetailView(PostMixin, DetailView):
 
     template_name = 'blog/detail.html'
 
-    def get_context_data(self, **kwargs):
+    def get_object(self, queryset=None):
         if not get_filtered_posts(Post.objects).filter(
             id=self.kwargs.get(self.pk_url_kwarg)
         ):
@@ -95,6 +96,9 @@ class PostDetailView(PostMixin, DetailView):
                 author=self.request.user,
                 id=self.kwargs.get(self.pk_url_kwarg)
             )
+        return super().get_object(queryset)
+
+    def get_context_data(self, **kwargs):
         return dict(
             comments=self.get_object().comments.all(),
             form=CommentForm(),
@@ -110,8 +114,7 @@ class PostCreateView(LoginRequiredMixin, PostMixin, CreateView):
         return super().form_valid(form)
 
 
-class PostUpdateView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
-                     UpdateView):
+class PostUpdateView(UserIsAuthorMixin, PostMixin, UpdateView):
     """Edit the requested post."""
 
     def get_success_url(self) -> str:
@@ -121,8 +124,7 @@ class PostUpdateView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
         )
 
 
-class PostDeleteView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
-                     DeleteView):
+class PostDeleteView(UserIsAuthorMixin, PostMixin, DeleteView):
     """Delete the requested post."""
 
     form_class = PostForm
@@ -134,8 +136,8 @@ class PostDeleteView(LoginRequiredMixin, UserIsAuthorMixin, PostMixin,
         )
 
 
-class CategoryDetailView(MultipleObjectMixin, DetailView):
-    """display a set of posts of a given category."""
+class CategoryDetailView(ListView):
+    """Render a category view with set of posts."""
 
     model = Category
     slug_url_kwarg = 'category_slug'
@@ -143,20 +145,16 @@ class CategoryDetailView(MultipleObjectMixin, DetailView):
     paginate_by = DISPLAYING_POSTS_ON_PAGE
 
     def get_context_data(self, **kwargs):
-        return dict(
-            category=self.get_object(),
-            **super().get_context_data(
-                object_list=get_filtered_posts(get_object_or_404(
-                    Category,
-                    is_published=True,
-                    slug=self.kwargs.get('category_slug')
-                ).posts.all()), **kwargs
-            ),
+        category = get_object_or_404(
+            Category, is_published=True,
+            slug=self.kwargs.get(self.slug_url_kwarg)
         )
+        self.object_list = get_filtered_posts(category.posts.all())
+        return dict(category=category, **super().get_context_data(**kwargs))
 
 
-class ProfileDetailView(MultipleObjectMixin, DetailView):
-    """Display the author's profile.."""
+class ProfileDetailView(ListView):
+    """Render author's profile view with an array of posts by that author."""
 
     model = User
     slug_field = 'username'
@@ -165,18 +163,18 @@ class ProfileDetailView(MultipleObjectMixin, DetailView):
     paginate_by = DISPLAYING_POSTS_ON_PAGE
 
     def get_context_data(self, **kwargs):
-        author = self.get_object()
-        if self.request.user != author:
-            posts = get_filtered_posts(author.posts)
-        else:
-            posts = add_count_comments(author.posts.all())
-        return dict(
-            profile=author,
-            **super().get_context_data(
-                object_list=posts,
-                **kwargs
-            ),
+        is_author = False
+        author = get_object_or_404(
+            User,
+            username=self.kwargs.get(self.slug_url_kwarg)
         )
+        if self.request.user == author:
+            is_author = True
+        self.object_list = get_filtered_posts(
+            author.posts.all(),
+            is_author
+        )
+        return dict(profile=author, **super().get_context_data(**kwargs))
 
 
 class ProfileUpdateView(LoginRequiredMixin, UpdateView):
@@ -199,7 +197,7 @@ class ProfileUpdateView(LoginRequiredMixin, UpdateView):
     def get_success_url(self) -> str:
         return reverse(
             'blog:profile',
-            kwargs={'profilename': self.request.user.username}
+            args=[self.request.user.username]
         )
 
 
@@ -219,11 +217,11 @@ class CommentCreateView(LoginRequiredMixin, RedirectToPostMixin, CreateView):
         return super().form_valid(form)
 
 
-class CommentUpdateView(LoginRequiredMixin, CommentChangeMixin, UpdateView):
+class CommentUpdateView(CommentChangeMixin, UpdateView):
     """Make changes to the selected comment."""
 
     form_class = CommentForm
 
 
-class CommentDeleteView(LoginRequiredMixin, CommentChangeMixin, DeleteView):
+class CommentDeleteView(CommentChangeMixin, DeleteView):
     """Delete the selected comment."""
