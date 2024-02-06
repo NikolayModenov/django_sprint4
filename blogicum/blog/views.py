@@ -11,26 +11,23 @@ from django.views.generic import (
 from .form import CommentForm, PostForm
 from .models import Category, Comment, Post
 
+
 DISPLAYING_POSTS_ON_PAGE = 10
 
 
-def get_filtered_posts(unfiltered_posts, is_author_profile_detail_view=False):
+def filter_out_posts(posts, is_need_availability_filter=True):
     """Filter the received posts from the database."""
-    if is_author_profile_detail_view:
-        return (
-            unfiltered_posts
-            .annotate(comments_count=Count('comments'))
-            .order_by('-pub_date')
-        )
-    return (
-        unfiltered_posts
-        .filter(
-            pub_date__lte=timezone.now(),
-            is_published=True,
-            category__is_published=True
-        )
-        .annotate(comments_count=Count('comments'))
-        .order_by('-pub_date')
+    posts_and_comments = posts.annotate(
+        comments_count=Count('comments')
+    ).order_by('-pub_date')
+
+    if not is_need_availability_filter:
+        return posts_and_comments
+
+    return posts_and_comments.filter(
+        pub_date__lte=timezone.now(),
+        is_published=True,
+        category__is_published=True
     )
 
 
@@ -41,28 +38,20 @@ class PostMixin:
     fields = 'title', 'text', 'pub_date', 'location', 'category', 'image'
 
     def get_success_url(self) -> str:
-        return reverse(
-            'blog:profile',
-            args=[self.request.user.username]
-        )
+        return reverse('blog:profile', args=[self.request.user.username])
 
 
 class UserIsAuthorMixin:
     def dispatch(self, request, *args, **kwargs):
         if self.request.user != self.get_object().author:
-            return redirect(
-                'blog:post_detail',
-                self.kwargs['post_id']
-            )
+            return redirect('blog:post_detail', self.kwargs['post_id'])
+
         return super().dispatch(request, *args, **kwargs)
 
 
 class RedirectToPostMixin:
     def get_success_url(self) -> str:
-        return reverse(
-            'blog:post_detail',
-            args=[self.kwargs['post_id']]
-        )
+        return reverse('blog:post_detail', args=[self.kwargs['post_id']])
 
 
 class CommentChangeMixin(UserIsAuthorMixin, RedirectToPostMixin):
@@ -75,9 +64,7 @@ class IndexListView(ListView):
     """Display the main page."""
 
     model = Post
-    queryset = (
-        get_filtered_posts(Post.objects)
-    )
+    queryset = filter_out_posts(Post.objects)
     template_name = 'blog/index.html'
     paginate_by = DISPLAYING_POSTS_ON_PAGE
 
@@ -87,16 +74,17 @@ class PostDetailView(PostMixin, DetailView):
 
     template_name = 'blog/detail.html'
 
-    def get_object(self, queryset=None):
-        if not get_filtered_posts(Post.objects).filter(
+    def get_object(self):
+        post = get_object_or_404(
+            Post.objects,
             id=self.kwargs.get(self.pk_url_kwarg)
-        ):
-            get_object_or_404(
-                Post.objects,
-                author=self.request.user,
+        )
+        if self.request.user != post.author:
+            return get_object_or_404(
+                filter_out_posts(Post.objects),
                 id=self.kwargs.get(self.pk_url_kwarg)
             )
-        return super().get_object(queryset)
+        return post
 
     def get_context_data(self, **kwargs):
         return dict(
@@ -114,7 +102,9 @@ class PostCreateView(LoginRequiredMixin, PostMixin, CreateView):
         return super().form_valid(form)
 
 
-class PostUpdateView(UserIsAuthorMixin, PostMixin, UpdateView):
+class PostUpdateView(
+    UserIsAuthorMixin, LoginRequiredMixin, PostMixin, UpdateView
+):
     """Edit the requested post."""
 
     def get_success_url(self) -> str:
@@ -124,7 +114,9 @@ class PostUpdateView(UserIsAuthorMixin, PostMixin, UpdateView):
         )
 
 
-class PostDeleteView(UserIsAuthorMixin, PostMixin, DeleteView):
+class PostDeleteView(
+    UserIsAuthorMixin, LoginRequiredMixin, PostMixin, DeleteView
+):
     """Delete the requested post."""
 
     form_class = PostForm
@@ -149,7 +141,7 @@ class CategoryDetailView(ListView):
             Category, is_published=True,
             slug=self.kwargs.get(self.slug_url_kwarg)
         )
-        self.object_list = get_filtered_posts(category.posts.all())
+        self.object_list = filter_out_posts(category.posts.all())
         return dict(category=category, **super().get_context_data(**kwargs))
 
 
@@ -163,16 +155,13 @@ class ProfileDetailView(ListView):
     paginate_by = DISPLAYING_POSTS_ON_PAGE
 
     def get_context_data(self, **kwargs):
-        is_author = False
         author = get_object_or_404(
             User,
             username=self.kwargs.get(self.slug_url_kwarg)
         )
-        if self.request.user == author:
-            is_author = True
-        self.object_list = get_filtered_posts(
+        self.object_list = filter_out_posts(
             author.posts.all(),
-            is_author
+            is_need_availability_filter=self.request.user != author
         )
         return dict(profile=author, **super().get_context_data(**kwargs))
 
@@ -195,10 +184,7 @@ class ProfileUpdateView(LoginRequiredMixin, UpdateView):
         return super().dispatch(request, *args, **kwargs)
 
     def get_success_url(self) -> str:
-        return reverse(
-            'blog:profile',
-            args=[self.request.user.username]
-        )
+        return reverse('blog:profile', args=[self.request.user.username])
 
 
 class CommentCreateView(LoginRequiredMixin, RedirectToPostMixin, CreateView):
@@ -217,11 +203,11 @@ class CommentCreateView(LoginRequiredMixin, RedirectToPostMixin, CreateView):
         return super().form_valid(form)
 
 
-class CommentUpdateView(CommentChangeMixin, UpdateView):
+class CommentUpdateView(CommentChangeMixin, LoginRequiredMixin, UpdateView):
     """Make changes to the selected comment."""
 
     form_class = CommentForm
 
 
-class CommentDeleteView(CommentChangeMixin, DeleteView):
+class CommentDeleteView(CommentChangeMixin, LoginRequiredMixin, DeleteView):
     """Delete the selected comment."""
